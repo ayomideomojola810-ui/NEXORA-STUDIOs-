@@ -9,7 +9,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Middleware check for API Security
 const verifyApiKey = (req, res, next) => {
     const apiKey = req.headers['x-api-key'] || req.body.apiKey;
     if (process.env.GATEWAY_API_KEY && apiKey !== process.env.GATEWAY_API_KEY) {
@@ -23,11 +22,16 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/pair', verifyApiKey, async (req, res) => {
-    const { phoneNumber } = req.body;
+    const { phoneNumber, forceNew } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: "Phone number is required" });
 
     const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
     const sessionDir = path.join(__dirname, 'sessions', `session_${cleanNumber}`);
+
+    // Delete existing session directory if explicitly requested or to clear dead attempts
+    if (forceNew && fs.existsSync(sessionDir)) {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
@@ -57,7 +61,11 @@ app.post('/api/pair', verifyApiKey, async (req, res) => {
             const code = await sock.requestPairingCode(cleanNumber);
             return res.json({ success: true, pairingCode: code });
         } else {
-            return res.json({ success: true, message: "Session already active and paired!" });
+            // Force clear the ghost session so the user can pair on the next click
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+            return res.status(400).json({ 
+                error: "Previous attempt was stuck. Session cleared! Please click 'Generate Pairing Code' again." 
+            });
         }
 
     } catch (err) {
@@ -70,3 +78,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Nexora Gateway running on port ${PORT}`);
 });
+                   
